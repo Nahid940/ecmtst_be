@@ -1,5 +1,7 @@
-from sqlalchemy import Column, Integer, String, Float
+from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime
 from app.database.database import Base
+from sqlalchemy.orm import relationship
+from datetime import datetime
 
 class Product(Base):
     __tablename__ = "products"
@@ -9,3 +11,6 @@ class Product(Base):
     price = Column(Float, nullable=False)
     total_inventory = Column(Integer, default=0)
     available_inventory = Column(Integer, default=0)
+
+
+    productReservations = relationship("ProductReservation", back_populates="product")

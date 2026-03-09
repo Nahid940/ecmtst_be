@@ -16,21 +16,3 @@ async def get_product(product_id: int, db: AsyncSession = Depends(get_db)):
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
     return product
-
-@router.post("/", response_model=ProductOut)
-async def create_product(product: ProductCreate, db: AsyncSession = Depends(get_db)):
-    return await ProductService.create_product(db, product)
-
-@router.put("/{product_id}", response_model=ProductOut)
-async def update_product(product_id: int, product: ProductUpdate, db: AsyncSession = Depends(get_db)):
-    updated = await ProductService.update_product(db, product_id, product)
-    if not updated:
-        raise HTTPException(status_code=404, detail="Product not found")
-    return updated
-
-@router.delete("/{product_id}", response_model=ProductOut)
-async def delete_product(product_id: int, db: AsyncSession = Depends(get_db)):
-    deleted = await ProductService.delete_product(db, product_id)
-    if not deleted:
-        raise HTTPException(status_code=404, detail="Product not found")
-    return deleted
