@@ -1,51 +1,42 @@
 import uuid
 import json
-from datetime import datetime, timedelta
+from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import HTTPException
-from app.models.productReservation import ProductReservation
 from app.models.product import Product
+from app.models.productReservation import ProductReservation
 from app.core.redis import redis_client
+from sqlalchemy import update
 
-RESERVATION_TTL = 600  # 5 minutes
+RESERVATION_TTL = 600  # 10 minutes
 
 class ReservationService:
 
     @staticmethod
     async def reserve_product(db: AsyncSession, product_id: int, user_id: int, quantity: int):
-        
         reservation_key = f"reservation:{user_id}:{product_id}"
 
-        product = await db.get(Product, product_id)
-        if not product:
-            raise HTTPException(status_code=404, detail="Product not found")
+        # Atomic inventory update in DB
+        stmt = (
+            update(Product)
+            .where(Product.id == product_id, Product.available_inventory >= quantity)
+            .values(available_inventory=Product.available_inventory - quantity)
+        )
+        result = await db.execute(stmt)
 
-        if product.available_inventory < quantity:
-            raise HTTPException(status_code=400, detail="Not enough inventory")
-
-        product.available_inventory -= quantity
-
-        # expires_at = datetime.utcnow() + timedelta(minutes=RESERVATION_MINUTES)
-        # reservation = ProductReservation(
-        #     product_id=product_id,
-        #     user_id=user_id,
-        #     quantity=quantity,
-        #     reserved_at=datetime.utcnow(),
-        #     expires_at=expires_at
-        # )
-        # db.add(reservation)
+        if result.rowcount == 0:
+            raise HTTPException(400, "Not enough inventory")
 
         await db.commit()
 
-        reservation_id = str(uuid.uuid4())
-
+        # Create reservation in Redis
         existing = await redis_client.get(reservation_key)
-
         if existing:
             reservation_data = json.loads(existing)
-            
             reservation_data["quantity"] += quantity
         else:
+            # Fetch product for name and price (optional, already in DB)
+            product = await db.get(Product, product_id)
             reservation_data = {
                 "product_id": product_id,
                 "user_id": user_id,
@@ -57,24 +48,23 @@ class ReservationService:
         await redis_client.setex(reservation_key, RESERVATION_TTL, json.dumps(reservation_data))
 
         return {
-            "reservation_id": reservation_id,
+            "reservation_id": str(uuid.uuid4()),
             "expires_in": RESERVATION_TTL
         }
 
     @staticmethod
     async def release_expired_reservations(db: AsyncSession):
         now = datetime.utcnow()
+    
         result = await db.execute(
             ProductReservation.__table__.select().where(ProductReservation.expires_at <= now)
         )
         expired_reservations = result.scalars().all()
 
         for reservation in expired_reservations:
-            # Restore inventory
-            product = await db.get(ProductReservation, reservation.product_id)
+            product = await db.get(Product, reservation.product_id)
             if product:
                 product.available_inventory += reservation.quantity
-            # Delete reservation
             await db.delete(reservation)
 
         await db.commit()

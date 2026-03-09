@@ -1,43 +1,90 @@
 import asyncio
+import logging
+import redis
 import json
-import redis.asyncio as redis
+import os
+from app.db import get_db  # your asyncpg/SQLAlchemy session
 
-from app.database.database import async_session
-from app.models.product import Product
+logger = logging.getLogger(__name__)
 
-redis_client = redis.Redis(host="127.0.0.1", port=6379, decode_responses=True)
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
+RESERVATION_PREFIX = "reservation:"
 
 
-async def reservation_listener():
+def start_expiry_listener():
+    """
+    Blocking pub/sub — runs in a background thread.
+    Listens for expired Redis keys and restores product inventory.
+    """
+    r = redis.from_url(REDIS_URL, decode_responses=True)
 
-    pubsub = redis_client.pubsub()
+    # Enable expiry events (safe to call on every startup)
+    r.config_set("notify-keyspace-events", "Ex")
 
-    await pubsub.psubscribe("__keyevent@0__:expired")
+    pubsub = r.pubsub()
+    pubsub.subscribe("__keyevent@0__:expired")
 
-    async for message in pubsub.listen():
+    logger.info("🚀 Worker listening for expired reservation keys...")
 
-        key = message["data"]
+    for message in pubsub.listen():
+        if message["type"] != "message":
+            continue
 
-        # Normalize the key to string
-        if isinstance(key, bytes):
-            key = key.decode()
-        elif isinstance(key, int):
-            key = str(key)
-        elif not isinstance(key, str):
-            continue  # ignore other types
+        expired_key: str = message["data"]
 
-        if key.startswith("reservation:"):
+        if not expired_key.startswith(RESERVATION_PREFIX):
+            continue
 
-            reservation_data = await redis_client.get(key)
+        logger.info(f"🔔 Expired: {expired_key}")
 
-            if reservation_data is None:
-                continue
+        # Run async handler from sync thread
+        asyncio.run(restore_inventory_from_key(expired_key, r))
 
-            data = json.loads(reservation_data)
 
-            async with async_session() as db:
-                product = await db.get(Product, data["product_id"])
+async def restore_inventory_from_key(expired_key: str, redis_client):
+    """
+    Redis key has already expired — value is gone.
+    We store a shadow copy in a separate hash to retrieve quantity + product_id.
+    """
 
-                if product:
-                    product.available_inventory += data["quantity"]
-                    await db.commit()
+    # Retrieve reservation metadata from shadow hash
+    shadow_key = f"shadow:{expired_key}"
+    data = redis_client.hgetall(shadow_key)
+
+    if not data:
+        logger.warning(f"No shadow data found for {expired_key}, cannot restore")
+        return
+
+    product_id = data.get("product_id")
+    quantity = int(data.get("quantity", 0))
+
+    if not product_id or quantity <= 0:
+        logger.warning(f"Invalid shadow data for {expired_key}: {data}")
+        return
+
+    # Distributed lock — safe for multi-pod deployments
+    lock_key = f"lock:expiry:{expired_key}"
+    acquired = redis_client.set(lock_key, "1", nx=True, ex=30)
+    if not acquired:
+        logger.warning(f"Lock already held for {expired_key}, skipping")
+        return
+
+    try:
+        async with get_db() as db:
+            await db.execute(
+                """
+                UPDATE products
+                SET available_quantity = available_quantity + $1,
+                    updated_at = NOW()
+                WHERE id = $2
+                """,
+                quantity,
+                product_id,
+            )
+            logger.info(f"✅ Restored {quantity} units → product {product_id}")
+
+        # Clean up shadow key after successful restore
+        redis_client.delete(shadow_key)
+
+    except Exception as e:
+        logger.error(f"❌ Failed to restore inventory for {expired_key}: {e}",
