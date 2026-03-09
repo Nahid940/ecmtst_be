@@ -4,7 +4,8 @@ from app.database.database import engine, Base
 from app.routers import product_router
 from app.admin.routers import product_router as admin_product_router
 from app.routers import reservation_router
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from app.routers import cart_router
+from app.routers import order_router
 from app.workers.reservation_worker import reservation_listener
 
 app = FastAPI(title="E-commerce Product API")
@@ -13,8 +14,8 @@ app = FastAPI(title="E-commerce Product API")
 app.include_router(product_router.router)
 app.include_router(admin_product_router.router)
 app.include_router(reservation_router.router)
-
-scheduler = AsyncIOScheduler()
+app.include_router(cart_router.router)
+app.include_router(order_router.router)
 
 
 # Create tables

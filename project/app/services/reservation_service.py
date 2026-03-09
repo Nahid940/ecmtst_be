@@ -7,13 +7,15 @@ from app.models.productReservation import ProductReservation
 from app.models.product import Product
 from app.core.redis import redis_client
 
-RESERVATION_TTL = 60  # 1 minutes
+RESERVATION_TTL = 600  # 5 minutes
 
 class ReservationService:
 
     @staticmethod
     async def reserve_product(db: AsyncSession, product_id: int, user_id: int, quantity: int):
         
+        reservation_key = f"reservation:{user_id}:{product_id}"
+
         product = await db.get(Product, product_id)
         if not product:
             raise HTTPException(status_code=404, detail="Product not found")
@@ -37,20 +39,22 @@ class ReservationService:
 
         reservation_id = str(uuid.uuid4())
 
-        reservation_data = {
-            "product_id": product_id,
-            "user_id": user_id,
-            "quantity": quantity
-        }
+        existing = await redis_client.get(reservation_key)
 
-        # store in redis with expiration
-        await redis_client.setex(
-            f"reservation:{reservation_id}",
-            RESERVATION_TTL,
-            json.dumps(reservation_data)
-        )
+        if existing:
+            reservation_data = json.loads(existing)
+            
+            reservation_data["quantity"] += quantity
+        else:
+            reservation_data = {
+                "product_id": product_id,
+                "user_id": user_id,
+                "quantity": quantity,
+                "name": product.name if product else "Unknown",
+                "price": float(product.price) if product else 0.00
+            }
 
-        # await db.refresh(reservation)
+        await redis_client.setex(reservation_key, RESERVATION_TTL, json.dumps(reservation_data))
 
         return {
             "reservation_id": reservation_id,
@@ -59,7 +63,6 @@ class ReservationService:
 
     @staticmethod
     async def release_expired_reservations(db: AsyncSession):
-        """Call this periodically or via Celery/BackgroundTask"""
         now = datetime.utcnow()
         result = await db.execute(
             ProductReservation.__table__.select().where(ProductReservation.expires_at <= now)
