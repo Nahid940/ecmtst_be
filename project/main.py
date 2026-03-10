@@ -7,7 +7,8 @@ from app.routers import reservation_router
 from app.routers import cart_router
 from app.routers import order_router
 from app.routers import auth_router
-from app.workers.reservation_worker import reservation_listener
+from fastapi.middleware.cors import CORSMiddleware
+# from app.workers.reservation_worker import reservation_listener
 
 app = FastAPI(title="E-commerce Product API")
 
@@ -19,6 +20,19 @@ app.include_router(cart_router.router)
 app.include_router(order_router.router)
 app.include_router(auth_router.router)
 
+origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],      # allow all HTTP methods
+    allow_headers=["*"],      # allow all headers
+)
+
 
 # Create tables
 @app.on_event("startup")
@@ -26,7 +40,7 @@ async def startup():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     
-    asyncio.create_task(reservation_listener())
+    # asyncio.create_task(reservation_listener())
     
 
 

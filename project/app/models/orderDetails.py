@@ -9,11 +9,12 @@ class OrderDetail(Base):
     id = Column(Integer, primary_key=True, index=True)
 
     order_id = Column(Integer, ForeignKey("orders.id"))
+    product_id = Column(Integer, ForeignKey("products.id"))
 
-    product_id = Column(Integer)
 
     quantity = Column(Integer)
 
     price = Column(Numeric(10,2))
 
-    order = relationship("Order", back_populates="items")
+    order   = relationship("Order", back_populates="items")
+    product = relationship("Product")

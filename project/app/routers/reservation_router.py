@@ -24,7 +24,7 @@ async def reserve_product_router(product_id: int, request: ReserveRequest, db: A
     reservation = await ReservationService.reserve_product(
         db,
         product_id,
-        request.user_id,
+        current_user.id,
         request.quantity
     )
 

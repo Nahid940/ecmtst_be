@@ -1,6 +1,7 @@
 from pydantic import BaseModel
 
 from typing import List, Optional
+from datetime import datetime
 
 
 class OrderItemCreate(BaseModel):
@@ -15,7 +16,9 @@ class OrderCreate(BaseModel):
 
 # Response Schemas
 class OrderItemResponse(BaseModel):
+    id:int
     product_id: int
+    name: str
     quantity: int
     price: float
 
@@ -25,8 +28,10 @@ class OrderItemResponse(BaseModel):
 
 class OrderResponse(BaseModel):
     id: int
-    user_id: int
     total_amount: float
+    created_at : datetime
+    created_date: str
+    created_time: str
     items: List[OrderItemResponse]
 
     class Config:

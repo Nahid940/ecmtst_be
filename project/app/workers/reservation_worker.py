@@ -3,7 +3,7 @@ import logging
 import redis
 import json
 import os
-from app.db import get_db  # your asyncpg/SQLAlchemy session
+from app.database.database import get_db
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ def start_expiry_listener():
     pubsub = r.pubsub()
     pubsub.subscribe("__keyevent@0__:expired")
 
-    logger.info("🚀 Worker listening for expired reservation keys...")
+    logger.info("Worker listening for expired reservation keys...")
 
     for message in pubsub.listen():
         if message["type"] != "message":
@@ -81,10 +81,10 @@ async def restore_inventory_from_key(expired_key: str, redis_client):
                 quantity,
                 product_id,
             )
-            logger.info(f"✅ Restored {quantity} units → product {product_id}")
+            logger.info(f"Restored {quantity} units → product {product_id}")
 
         # Clean up shadow key after successful restore
         redis_client.delete(shadow_key)
 
     except Exception as e:
-        logger.error(f"❌ Failed to restore inventory for {expired_key}: {e}",
+        logger.error(f"Failed to restore inventory for {expired_key}: {e}"),
